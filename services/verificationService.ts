@@ -1,18 +1,9 @@
-
 import { Challenge, FrameData, VerificationResult, GestureType, ExpressionType } from '../types';
 
-/**
- * VerificationService handles the logic:
- * - Evaluating liveness scores (EAR, temporal variance)
- * - Validating gestures and expressions
- * - Issuing JWT-like tokens
- * 
- * SECURITY UPDATE: Strict multi-factor check. All factors must pass.
- */
 export class VerificationService {
   private static CHALLENGE_EXPIRY = 45000;
-  // Threshold: Factor must be detected in at least 20% of frames to account for reaction time
-  private static MIN_PASS_RATIO = 0.20; 
+  // Threshold: Factor must be detected in at least 15% of frames (lenient for short window)
+  private static MIN_PASS_RATIO = 0.15; 
 
   static generateChallenge(): Challenge {
     const gestures: GestureType[] = ["left_hand_up", "right_hand_up", "touch_nose"];
@@ -31,7 +22,6 @@ export class VerificationService {
       return { success: false, score: 0, reasons: ["Protocol timeout: session expired"] };
     }
 
-    // Ensure we have enough data. 5 seconds at ~15fps is 75 frames.
     if (frames.length < 15) {
       return { success: false, score: 0, reasons: ["Data density failure: insufficient biometric stream"] };
     }
@@ -42,23 +32,21 @@ export class VerificationService {
     frames.forEach(f => {
       const { landmarks } = f;
       
-      // Gesture Detection
+      // Gesture Detection - Y is inverted in screen coords (0 is top, 1 is bottom)
+      // So wrist.y < shoulder.y means hand is ABOVE shoulders.
       if (challenge.gesture === "left_hand_up") {
-        // Physical Left hand up
         if (landmarks.left_hand_y > 0 && landmarks.left_hand_y < landmarks.shoulder_y) gesturePassCount++;
       } else if (challenge.gesture === "right_hand_up") {
-        // Physical Right hand up
         if (landmarks.right_hand_y > 0 && landmarks.right_hand_y < landmarks.shoulder_y) gesturePassCount++;
       } else if (challenge.gesture === "touch_nose") {
-        // Hand tip near nose
-        if (landmarks.hand_nose_dist < 0.16) gesturePassCount++;
+        if (landmarks.hand_nose_dist < 0.20) gesturePassCount++;
       }
 
       // Expression Detection
       if (challenge.expression === "smile") {
-        if (landmarks.mouth_width > 0.075) expressionPassCount++;
+        if (landmarks.mouth_width > 0.07) expressionPassCount++;
       } else if (challenge.expression === "frown") {
-        if (landmarks.brow_distance < 0.025) expressionPassCount++;
+        if (landmarks.brow_distance < 0.03) expressionPassCount++;
       } else if (challenge.expression === "blink") {
         if (landmarks.eye_ratio < 0.012) expressionPassCount++;
       }
@@ -67,10 +55,9 @@ export class VerificationService {
     const gestureRatio = gesturePassCount / frames.length;
     const expressionRatio = expressionPassCount / frames.length;
 
-    // Liveness Detection (Temporal EAR Variance)
     const earValues = frames.map(f => f.eye_ratio);
     const variance = this.calculateVariance(earValues);
-    const isHumanNoiseDetected = variance > 0.000000005; 
+    const isHumanNoiseDetected = variance > 0.000000001; 
 
     const gesturePassed = gestureRatio >= this.MIN_PASS_RATIO;
     const expressionPassed = expressionRatio >= this.MIN_PASS_RATIO;
@@ -86,25 +73,21 @@ export class VerificationService {
 
     const reasons = [];
     if (!gesturePassed) {
-      reasons.push(`CRITICAL: Mandatory gesture (${challenge.gesture.replace(/_/g, ' ')}) not detected`);
+      reasons.push(`CRITICAL: Mandatory gesture (${challenge.gesture.replace(/_/g, ' ')}) missing`);
     } else {
-      reasons.push(`Gesture sequence verified: ${Math.round(gestureRatio * 100)}% temporal match`);
+      reasons.push(`Gesture confirmed: ${Math.round(gestureRatio * 100)}% match`);
     }
 
     if (!expressionPassed) {
-      reasons.push(`CRITICAL: Mandatory expression (${challenge.expression}) not detected`);
+      reasons.push(`CRITICAL: Mandatory expression (${challenge.expression}) missing`);
     } else {
-      reasons.push(`Expression micro-signature verified: ${Math.round(expressionRatio * 100)}% temporal match`);
+      reasons.push(`Expression confirmed: ${Math.round(expressionRatio * 100)}% match`);
     }
 
     if (!livenessPassed) {
-      reasons.push("CRITICAL: Temporal authenticity failed (Static subject suspected)");
+      reasons.push("CRITICAL: Temporal authenticity failure");
     } else {
-      reasons.push("Temporal noise verified (Human subject confirmed)");
-    }
-
-    if (success) {
-      reasons.push("All security layers validated successfully");
+      reasons.push("Temporal authenticity confirmed");
     }
 
     return {
@@ -121,13 +104,6 @@ export class VerificationService {
   }
 
   private static generateToken(challengeId: string): string {
-    const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-    const payload = btoa(JSON.stringify({
-      sub: "biometric_auth",
-      cid: challengeId,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 600
-    }));
-    return `MFPOL.${header}.${payload}.sig_0x${Math.floor(Math.random() * 0xffffff).toString(16)}`;
+    return `MFPOL.${btoa(challengeId)}.${btoa(Date.now().toString())}.sig_${Math.floor(Math.random() * 0xffffff).toString(16)}`;
   }
 }

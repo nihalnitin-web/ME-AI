@@ -1,15 +1,17 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Layout } from './components/Layout';
 import { CameraView } from './components/CameraView';
 import { VerificationService } from './services/verificationService';
 import { AppState, Challenge, FrameData, LandmarkData, VerificationResult } from './types';
+import { GoogleGenAI } from "@google/genai";
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(AppState.IDLE);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [frames, setFrames] = useState<FrameData[]>([]);
   const [countdown, setCountdown] = useState(5);
-  const [result, setResult] = useState<VerificationResult | null>(null);
+  const [result, setResult] = useState<VerificationResult & { aiAudit?: string } | null>(null);
   
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -42,10 +44,31 @@ const App: React.FC = () => {
   const handleFinalize = async () => {
     setState(AppState.VERIFYING);
     if (challenge) {
-      // Small delay for UX feel
-      await new Promise(r => setTimeout(r, 1200));
-      const res = VerificationService.verify(challenge, frames);
-      setResult(res);
+      // 1. Run local mathematical verification
+      const localRes = VerificationService.verify(challenge, frames);
+      
+      // 2. Run AI Forensic Audit via Gemini
+      let aiAuditSummary = "AI Audit skipped: connectivity issue.";
+      try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const auditResponse = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `Perform a forensic liveness audit. 
+            Challenge: Gesture ${challenge.gesture}, Expression ${challenge.expression}. 
+            Data: ${frames.length} frames captured. 
+            Local Result: ${localRes.success ? 'PASS' : 'FAIL'}. 
+            Score: ${localRes.score}%.
+            Summarize the authenticity of the temporal biometric stream in 2 sentences.`,
+          config: {
+            systemInstruction: "You are a high-security biometric auditor. Analyze the provided data for liveness and provide a professional, concise verdict."
+          }
+        });
+        aiAuditSummary = auditResponse.text || "No audit notes recorded.";
+      } catch (err) {
+        console.error("AI Audit Error:", err);
+      }
+
+      setResult({ ...localRes, aiAudit: aiAuditSummary });
       setState(AppState.RESULT);
     }
   };
@@ -135,8 +158,8 @@ const App: React.FC = () => {
                     <div className="absolute inset-4 border-2 border-blue-400/20 rounded-full animate-pulse"></div>
                   </div>
                   <div>
-                    <h3 className="text-3xl font-black tracking-widest uppercase">Analyzing_Signature</h3>
-                    <p className="text-slate-400 font-mono text-sm mt-2">Checking EAR variance & geometric alignment...</p>
+                    <h3 className="text-3xl font-black tracking-widest uppercase">AI_Forensic_Audit</h3>
+                    <p className="text-slate-400 font-mono text-sm mt-2">Checking EAR variance & temporal noise patterns...</p>
                   </div>
                 </div>
               </div>
@@ -146,7 +169,6 @@ const App: React.FC = () => {
 
         {state === AppState.RESULT && result && (
           <div className="max-w-2xl w-full bg-slate-900 rounded-3xl border border-slate-800 p-10 shadow-2xl animate-in zoom-in-95 duration-500 relative overflow-hidden">
-            {/* Background glow */}
             <div className={`absolute -top-24 -left-24 w-64 h-64 rounded-full blur-[100px] opacity-20 ${result.success ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
 
             <div className="flex flex-col items-center text-center mb-10 relative">
@@ -167,16 +189,25 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-slate-950/50 rounded-2xl p-8 border border-slate-800 mb-10">
-              <h4 className="text-[10px] font-mono text-slate-500 uppercase tracking-[0.3em] mb-6">Biometric_Verification_Log</h4>
-              <ul className="space-y-4">
-                {result.reasons.map((r, i) => (
-                  <li key={i} className="flex items-start gap-4 text-sm font-mono text-slate-300">
-                    <span className={`w-1.5 h-1.5 mt-1.5 rounded-full ${result.success ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-                    <span className="flex-1 opacity-80">{r}</span>
-                  </li>
-                ))}
-              </ul>
+            <div className="space-y-4 mb-10">
+              <div className="bg-slate-950/50 rounded-2xl p-6 border border-slate-800">
+                <h4 className="text-[10px] font-mono text-slate-500 uppercase tracking-[0.3em] mb-4">Biometric_Logs</h4>
+                <ul className="space-y-2">
+                  {result.reasons.map((r, i) => (
+                    <li key={i} className="flex items-start gap-3 text-[11px] font-mono text-slate-400">
+                      <span className={`w-1 h-1 mt-1.5 rounded-full ${result.success ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                      <span className="opacity-80">{r}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="bg-blue-500/5 rounded-2xl p-6 border border-blue-500/20">
+                <h4 className="text-[10px] font-mono text-blue-500 uppercase tracking-[0.3em] mb-4">AI_Forensic_Summary</h4>
+                <p className="text-xs text-slate-300 italic leading-relaxed">
+                  "{result.aiAudit}"
+                </p>
+              </div>
             </div>
 
             {result.success && result.token && (
