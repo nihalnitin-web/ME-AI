@@ -1,0 +1,13 @@
+services:
+  - type: static
+    name: mf-proof-of-life
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: API_KEY
+        sync: false # Set this in the Render Dashboard
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
