@@ -1,0 +1,7 @@
+{
+  "name": "ME>AI",
+  "description": "High-security biometric verification using real-time MediaPipe landmarks to detect liveness through dynamic gesture and expression challenges.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
